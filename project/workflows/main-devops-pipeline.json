@@ -1,0 +1,544 @@
+{
+  "name": "Agentic DevOps Pipeline",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "webhook-trigger",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "GitHub Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "webhookId": "devops-pipeline-trigger"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition-1",
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "opened",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "condition-2",
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "synchronize",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "id": "pr-filter",
+      "name": "Filter PR Events",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://mcp-server:3000/agent/code-review",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.MCP_SERVER_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "repository",
+              "value": "={{ $json.repository.full_name }}"
+            },
+            {
+              "name": "pr_number",
+              "value": "={{ $json.number }}"
+            },
+            {
+              "name": "diff_url",
+              "value": "={{ $json.pull_request.diff_url }}"
+            },
+            {
+              "name": "llm_model",
+              "value": "gpt-4"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "code-review-agent",
+      "name": "Code Review Agent",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [680, 180]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://mcp-server:3000/agent/test-writer",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.MCP_SERVER_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "repository",
+              "value": "={{ $json.repository.full_name }}"
+            },
+            {
+              "name": "pr_number",
+              "value": "={{ $json.number }}"
+            },
+            {
+              "name": "changed_files",
+              "value": "={{ $json.pull_request.changed_files }}"
+            },
+            {
+              "name": "llm_model",
+              "value": "gpt-4"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "test-writer-agent",
+      "name": "Test Writer Agent",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [680, 420]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition-1",
+              "leftValue": "={{ $('Code Review Agent').item.json.status }}",
+              "rightValue": "approved",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "condition-2",
+              "leftValue": "={{ $('Test Writer Agent').item.json.tests_generated }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "approval-gate",
+      "name": "Approval Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://mcp-server:3000/agent/build-predictor",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.MCP_SERVER_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "repository",
+              "value": "={{ $json.repository.full_name }}"
+            },
+            {
+              "name": "branch",
+              "value": "={{ $json.pull_request.head.ref }}"
+            },
+            {
+              "name": "commit_sha",
+              "value": "={{ $json.pull_request.head.sha }}"
+            },
+            {
+              "name": "llm_model",
+              "value": "gpt-4"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "build-predictor",
+      "name": "Build Predictor Agent",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://mcp-server:3000/agent/docker-handler",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.MCP_SERVER_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "repository",
+              "value": "={{ $json.repository.full_name }}"
+            },
+            {
+              "name": "commit_sha",
+              "value": "={{ $json.pull_request.head.sha }}"
+            },
+            {
+              "name": "build_prediction",
+              "value": "={{ $('Build Predictor Agent').item.json }}"
+            },
+            {
+              "name": "action",
+              "value": "build_and_push"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "docker-handler",
+      "name": "Docker/K8s Handler",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://mcp-server:3000/agent/deploy",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.MCP_SERVER_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "repository",
+              "value": "={{ $json.repository.full_name }}"
+            },
+            {
+              "name": "image_tag",
+              "value": "={{ $('Docker/K8s Handler').item.json.image_tag }}"
+            },
+            {
+              "name": "environment",
+              "value": "staging"
+            },
+            {
+              "name": "kubernetes_config",
+              "value": "={{ $('Docker/K8s Handler').item.json.k8s_manifests }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "deploy-agent",
+      "name": "Deploy Agent",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1560, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://mcp-server:3000/agent/monitor",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.MCP_SERVER_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "deployment_id",
+              "value": "={{ $('Deploy Agent').item.json.deployment_id }}"
+            },
+            {
+              "name": "environment",
+              "value": "staging"
+            },
+            {
+              "name": "monitoring_duration",
+              "value": "300"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "monitor-agent",
+      "name": "Monitor Agent",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1780, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ {\n  \"status\": \"success\",\n  \"pipeline_id\": $json.pipeline_id || \"pipeline-\" + $now,\n  \"agents_executed\": [\n    \"code-review\",\n    \"test-writer\", \n    \"build-predictor\",\n    \"docker-handler\",\n    \"deploy-agent\",\n    \"monitor-agent\"\n  ],\n  \"deployment_url\": $('Deploy Agent').item.json.deployment_url,\n  \"monitoring_dashboard\": $('Monitor Agent').item.json.dashboard_url\n} }}",
+        "options": {}
+      },
+      "id": "response-node",
+      "name": "Pipeline Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [2000, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://mcp-server:3000/notifications/slack",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "channel",
+              "value": "#devops-alerts"
+            },
+            {
+              "name": "message",
+              "value": "🚀 DevOps Pipeline completed successfully for {{ $json.repository.full_name }} PR #{{ $json.number }}"
+            },
+            {
+              "name": "deployment_url",
+              "value": "={{ $('Deploy Agent').item.json.deployment_url }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "slack-notification",
+      "name": "Slack Notification",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1780, 480]
+    }
+  ],
+  "connections": {
+    "GitHub Webhook": {
+      "main": [
+        [
+          {
+            "node": "Filter PR Events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter PR Events": {
+      "main": [
+        [
+          {
+            "node": "Code Review Agent",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Test Writer Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code Review Agent": {
+      "main": [
+        [
+          {
+            "node": "Approval Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Test Writer Agent": {
+      "main": [
+        [
+          {
+            "node": "Approval Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Approval Gate": {
+      "main": [
+        [
+          {
+            "node": "Build Predictor Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Predictor Agent": {
+      "main": [
+        [
+          {
+            "node": "Docker/K8s Handler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Docker/K8s Handler": {
+      "main": [
+        [
+          {
+            "node": "Deploy Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Deploy Agent": {
+      "main": [
+        [
+          {
+            "node": "Monitor Agent",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Slack Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Monitor Agent": {
+      "main": [
+        [
+          {
+            "node": "Pipeline Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "createdAt": "2024-01-15T10:00:00.000Z",
+      "updatedAt": "2024-01-15T10:00:00.000Z",
+      "id": "devops-automation",
+      "name": "DevOps Automation"
+    }
+  ],
+  "triggerCount": 1,
+  "updatedAt": "2024-01-15T10:00:00.000Z",
+  "versionId": "1"
+}
