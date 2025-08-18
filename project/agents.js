@@ -104,6 +104,21 @@ router.post('/docker-handler', async (req, res) => {
   try {
     const { repository, commit_sha, build_prediction, action } = req.body;
     
+    // For debugging
+    logger.debug('Docker handler request params:', { 
+      repository, 
+      commit_sha: commit_sha || 'MISSING', 
+      build_prediction: build_prediction ? 'PROVIDED' : 'MISSING',
+      action
+    });
+    
+    // Try to extract commit_sha from build_prediction if not provided directly
+    let finalCommitSha = commit_sha;
+    if (!finalCommitSha && build_prediction && build_prediction.commit_sha) {
+      finalCommitSha = build_prediction.commit_sha;
+      logger.info('Using commit_sha from build_prediction:', finalCommitSha);
+    }
+    
     // Validate required parameters
     if (!repository) {
       return res.status(400).json({
@@ -112,7 +127,7 @@ router.post('/docker-handler', async (req, res) => {
       });
     }
     
-    if (!commit_sha) {
+    if (!finalCommitSha) {
       return res.status(400).json({
         error: 'Missing required parameter',
         message: 'Commit SHA parameter is required'
@@ -121,7 +136,7 @@ router.post('/docker-handler', async (req, res) => {
     
     const result = await dockerHandlerAgent.handle({
       repository,
-      commit_sha,
+      commit_sha: finalCommitSha,
       build_prediction,
       action
     });
