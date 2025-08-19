@@ -1,0 +1,260 @@
+const { ClientSecretCredential } = require('@azure/identity');
+const { ContainerServiceClient } = require('@azure/arm-containerservice');
+const winston = require('winston');
+
+const logger = winston.createLogger({
+  level: 'info',
+  format: winston.format.simple(),
+  transports: [new winston.transports.Console()]
+});
+
+class AksProvisioner {
+  constructor() {
+    // Read Azure credentials from environment variables
+    this.tenantId = process.env.AZURE_TENANT_ID;
+    this.clientId = process.env.AZURE_CLIENT_ID;
+    this.clientSecret = process.env.AZURE_CLIENT_SECRET;
+    this.subscriptionId = process.env.AZURE_SUBSCRIPTION_ID;
+    this.resourceGroupName = process.env.AZURE_RESOURCE_GROUP || 'devops-poc-rg';
+    this.location = process.env.AZURE_LOCATION || 'eastus';
+    
+    // Check if credentials are available
+    this.azureAvailable = !!(this.tenantId && this.clientId && this.clientSecret && this.subscriptionId);
+    
+    if (this.azureAvailable) {
+      try {
+        // Initialize Azure credentials
+        this.credentials = new ClientSecretCredential(this.tenantId, this.clientId, this.clientSecret);
+        
+        // Initialize container service client
+        this.containerServiceClient = new ContainerServiceClient(this.credentials, this.subscriptionId);
+        
+        logger.info('Azure AKS client initialized successfully');
+      } catch (error) {
+        logger.error('Failed to initialize Azure clients:', error);
+        this.azureAvailable = false;
+      }
+    } else {
+      logger.warn('Azure credentials not found, will use mock implementation');
+    }
+  }
+  
+  async createAksCluster(clusterName, nodeCount = 1, vmSize = 'Standard_D2s_v3') {
+    if (!this.azureAvailable) {
+      return this.mockCreateAksCluster(clusterName, nodeCount, vmSize);
+    }
+    
+    logger.info(`Creating AKS cluster: ${clusterName} in ${this.resourceGroupName}`);
+    
+    try {
+      // Define cluster parameters
+      const clusterParameters = {
+        location: this.location,
+        dnsPrefix: `${clusterName}-dns`,
+        agentPoolProfiles: [
+          {
+            name: 'agentpool',
+            count: nodeCount,
+            vmSize: vmSize,
+            mode: 'System',
+            osType: 'Linux'
+          }
+        ],
+        servicePrincipalProfile: {
+          clientId: this.clientId,
+          secret: this.clientSecret
+        },
+        kubernetesVersion: '1.27.7' // Try an older version that's more likely to be supported
+      };
+      
+      // Create the cluster
+      const createOperation = await this.containerServiceClient.managedClusters.beginCreateOrUpdate(
+        this.resourceGroupName,
+        clusterName,
+        clusterParameters
+      );
+      
+      // AKS cluster creation takes time, so we'll return the operation status
+      logger.info(`AKS cluster creation initiated: ${clusterName}`);
+      
+      // Here you would typically wait for the operation to complete
+      // For POC, we'll return quickly
+      return {
+        status: 'creating',
+        cluster_name: clusterName,
+        resource_group: this.resourceGroupName,
+        location: this.location,
+        provisioning_state: 'InProgress',
+        estimated_time_minutes: 10,
+        mock: false
+      };
+    } catch (error) {
+      logger.error(`Failed to create AKS cluster ${clusterName}:`, error);
+      throw error;
+    }
+  }
+  
+  async getAksCredentials(clusterName) {
+    if (!this.azureAvailable) {
+      return this.mockGetAksCredentials(clusterName);
+    }
+    
+    try {
+      // Get cluster details
+      const cluster = await this.containerServiceClient.managedClusters.get(
+        this.resourceGroupName,
+        clusterName
+      );
+      
+      // Get cluster admin credentials
+      const credentials = await this.containerServiceClient.managedClusters.listClusterAdminCredentials(
+        this.resourceGroupName,
+        clusterName
+      );
+      
+      // The kubeconfig is in the credentials.kubeconfigs array
+      if (credentials.kubeconfigs && credentials.kubeconfigs.length > 0) {
+        const kubeConfigContent = credentials.kubeconfigs[0].value.toString('utf8');
+        logger.info(`Retrieved kubeconfig for cluster ${clusterName}`);
+        
+        return {
+          status: 'success',
+          cluster_name: clusterName,
+          kubeconfig: kubeConfigContent,
+          provisioning_state: cluster.provisioningState,
+          fqdn: cluster.fqdn,
+          mock: false
+        };
+      } else {
+        throw new Error('No kubeconfig found in the response');
+      }
+    } catch (error) {
+      logger.error(`Failed to get AKS credentials for ${clusterName}:`, error);
+      throw error;
+    }
+  }
+  
+  async deleteAksCluster(clusterName) {
+    if (!this.azureAvailable) {
+      return this.mockDeleteAksCluster(clusterName);
+    }
+    
+    try {
+      logger.info(`Deleting AKS cluster: ${clusterName}`);
+      
+      // Start the delete operation
+      const deleteOperation = await this.containerServiceClient.managedClusters.beginDeleteMethod(
+        this.resourceGroupName,
+        clusterName
+      );
+      
+      return {
+        status: 'deleting',
+        cluster_name: clusterName,
+        resource_group: this.resourceGroupName,
+        mock: false
+      };
+    } catch (error) {
+      logger.error(`Failed to delete AKS cluster ${clusterName}:`, error);
+      throw error;
+    }
+  }
+  
+  async waitForClusterReady(clusterName, timeoutMinutes = 10) {
+    logger.info(`Waiting for AKS cluster ${clusterName} to be ready...`);
+    
+    const startTime = Date.now();
+    const timeoutMs = timeoutMinutes * 60 * 1000;
+    
+    while (Date.now() - startTime < timeoutMs) {
+      try {
+        // Check cluster status
+        const cluster = await this.getClusterStatus(clusterName);
+        
+        if (cluster.provisioningState === 'Succeeded') {
+          logger.info(`AKS cluster ${clusterName} is ready!`);
+          return true;
+        }
+        
+        logger.info(`Cluster status: ${cluster.provisioningState}. Waiting...`);
+        // Wait 30 seconds before checking again
+        await new Promise(resolve => setTimeout(resolve, 30000));
+      } catch (error) {
+        logger.warn(`Error checking cluster status: ${error.message}. Continuing to wait...`);
+        await new Promise(resolve => setTimeout(resolve, 30000));
+      }
+    }
+    
+    throw new Error(`Timeout waiting for cluster ${clusterName} to be ready after ${timeoutMinutes} minutes`);
+  }
+  
+  async getClusterStatus(clusterName) {
+    if (!this.azureAvailable) {
+      // In mock mode, pretend it's ready after a short delay
+      await new Promise(resolve => setTimeout(resolve, 3000));
+      return {
+        provisioningState: 'Succeeded',
+        mock: true
+      };
+    }
+    
+    try {
+      const cluster = await this.containerServiceClient.managedClusters.get(
+        this.resourceGroupName,
+        clusterName
+      );
+      
+      return {
+        provisioningState: cluster.provisioningState,
+        name: cluster.name,
+        location: cluster.location,
+        kubernetesVersion: cluster.kubernetesVersion,
+        mock: false
+      };
+    } catch (error) {
+      logger.error(`Failed to get status of cluster ${clusterName}:`, error);
+      throw error;
+    }
+  }
+  
+  // Mock methods for when Azure credentials aren't available
+  mockCreateAksCluster(clusterName, nodeCount, vmSize) {
+    logger.info(`[MOCK] Creating AKS cluster: ${clusterName} with ${nodeCount} nodes of size ${vmSize}`);
+    
+    return {
+      status: 'creating',
+      cluster_name: clusterName,
+      resource_group: this.resourceGroupName || 'mock-resource-group',
+      location: this.location || 'eastus',
+      provisioning_state: 'InProgress',
+      estimated_time_minutes: 10,
+      mock: true
+    };
+  }
+  
+  mockGetAksCredentials(clusterName) {
+    logger.info(`[MOCK] Retrieved kubeconfig for cluster ${clusterName}`);
+    
+    return {
+      status: 'success',
+      cluster_name: clusterName,
+      kubeconfig: 'mock-kubeconfig-content',
+      provisioning_state: 'Succeeded',
+      fqdn: `${clusterName}.azmk8s.io`,
+      mock: true
+    };
+  }
+  
+  mockDeleteAksCluster(clusterName) {
+    logger.info(`[MOCK] Deleting AKS cluster: ${clusterName}`);
+    
+    return {
+      status: 'deleting',
+      cluster_name: clusterName,
+      resource_group: this.resourceGroupName || 'mock-resource-group',
+      mock: true
+    };
+  }
+}
+
+module.exports = new AksProvisioner();
