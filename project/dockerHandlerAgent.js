@@ -12,16 +12,29 @@ const logger = winston.createLogger({
 
 class DockerHandlerAgent {
   constructor() {
-    this.docker = new Docker();
+    // Try to initialize Docker, but provide fallback if not available
+    try {
+      this.docker = new Docker();
+      this.dockerAvailable = true;
+      logger.info('Docker client initialized successfully');
+    } catch (error) {
+      logger.warn('Docker initialization failed:', error.message);
+      this.dockerAvailable = false;
+      logger.info('Will use mock Docker implementation for POC');
+    }
     
-    // Initialize Kubernetes client
+    // Initialize Kubernetes client with fallback
+    this.k8sAvailable = false;
     this.kc = new k8s.KubeConfig();
     try {
       this.kc.loadFromDefault();
-      this.k8sApi = this.kc.makeApiClient(k8s.AppsV1Api);
-      this.k8sCoreApi = this.kc.makeApiClient(k8s.CoreV1Api);
+      this.k8sClient = this.kc.makeApiClient(k8s.CoreV1Api);
+      this.k8sAppsClient = this.kc.makeApiClient(k8s.AppsV1Api);
+      this.k8sAvailable = true;
+      logger.info('Kubernetes client initialized successfully');
     } catch (error) {
       logger.warn('Kubernetes client initialization failed:', error.message);
+      logger.info('Will use mock Kubernetes implementation for POC');
     }
   }
 
@@ -38,9 +51,7 @@ class DockerHandlerAgent {
         throw new Error('Commit SHA parameter is required');
       }
       
-      // Handle null or undefined repository by providing a default value for splitting
-      const repoString = repository || '';
-      const [owner, repo] = repoString.split('/');
+      const [owner, repo] = repository.split('/');
       
       if (!owner || !repo) {
         throw new Error('Repository must be in format owner/repo');
@@ -48,14 +59,22 @@ class DockerHandlerAgent {
       
       logger.info(`Docker handler: ${action} for ${repository} at ${commit_sha}`);
       
+      // Choose between real implementation or mock based on Docker availability
       switch (action) {
         case 'build_and_push':
-          return await this.buildAndPushImage(owner, repo, commit_sha, build_prediction);
+          if (this.dockerAvailable) {
+            return await this.buildAndPushImage(owner, repo, commit_sha, build_prediction);
+          } else {
+            return this.mockBuildAndPushImage(owner, repo, commit_sha, build_prediction);
+          }
         case 'generate_k8s_manifests':
-          const imageName = `${owner}/${repo}:${commit_sha.substring(0, 7)}`;
-          return await this.generateKubernetesManifests(owner, repo, build_prediction, imageName);
+          return await this.generateKubernetesManifests(owner, repo, build_prediction, `${owner}/${repo}:${commit_sha.substring(0, 7)}`);
         case 'deploy_to_k8s':
-          return await this.deployToKubernetes(params);
+          if (this.k8sAvailable) {
+            return await this.deployToKubernetes(params);
+          } else {
+            return this.mockDeployToKubernetes(params);
+          }
         default:
           throw new Error(`Unknown action: ${action}`);
       }
@@ -63,6 +82,36 @@ class DockerHandlerAgent {
       logger.error('Docker handling failed:', error);
       throw error;
     }
+  }
+
+  // Mock implementation for when Docker is not available
+  mockBuildAndPushImage(owner, repo, commitSha, buildPrediction) {
+    logger.info(`[MOCK] Building Docker image for ${owner}/${repo} at commit ${commitSha.substring(0, 7)}`);
+    
+    // Generate a mock Dockerfile based on the build prediction
+    const dockerfileContent = this.createDockerfileContent(buildPrediction);
+    logger.info('[MOCK] Generated Dockerfile:', dockerfileContent.substring(0, 100) + '...');
+    
+    // Mock image name
+    const shortSha = commitSha.substring(0, 7);
+    const imageName = `${owner}/${repo}:${shortSha}`;
+    
+    // Mock registry
+    const registryHost = process.env.DOCKER_REGISTRY || 'mock-registry.example.com';
+    const registryImage = `${registryHost}/${imageName}`;
+    
+    logger.info(`[MOCK] Image would be pushed to ${registryImage}`);
+    
+    // Return mock success response
+    return {
+      status: 'success',
+      image: imageName,
+      registry_image: registryImage,
+      build_output: '[MOCK] Docker build completed successfully',
+      mock: true,
+      dockerfile: dockerfileContent,
+      pipeline_id: 'pipeline-' + Date.now()
+    };
   }
 
   async buildAndPushImage(owner, repo, commitSha, buildPrediction) {
@@ -114,8 +163,8 @@ class DockerHandlerAgent {
     
     try {
       await fs.writeFile('Dockerfile', dockerfile);
-      logger.info('Generated Dockerfile');
-      return dockerfile;
+      logger.info('Dockerfile generated at ' + path.resolve('Dockerfile'));
+      return 'Dockerfile';
     } catch (error) {
       logger.error('Failed to write Dockerfile:', error);
       throw error;
@@ -126,38 +175,82 @@ class DockerHandlerAgent {
     // Handle null or undefined buildPrediction
     const prediction = buildPrediction || {};
     const strategy = prediction.strategy || 'standard';
-    const resources = prediction.resources || {};
     
-    // Default values if fields are missing
-    const cpuReq = resources.cpu || '2 cores';
-    const memReq = resources.memory || '4GB';
+    // Extract the programming language from the repository info
+    const language = prediction.language || 'javascript';
     
-    // Simple Dockerfile generation based on detected language/framework
-    return `
-# Generated Dockerfile
-FROM node:18-alpine
-
+    // Base image selection based on language
+    let baseImage = 'node:18-alpine';
+    let buildCommands = '';
+    let runCommand = 'npm start';
+    
+    // Configure based on detected language
+    switch (language.toLowerCase()) {
+      case 'javascript':
+      case 'typescript':
+        baseImage = 'node:18-alpine';
+        buildCommands = 'COPY package*.json ./\nRUN npm ci\nCOPY . .';
+        runCommand = 'npm start';
+        break;
+      case 'python':
+        baseImage = 'python:3.11-slim';
+        buildCommands = 'COPY requirements.txt .\nRUN pip install --no-cache-dir -r requirements.txt\nCOPY . .';
+        runCommand = 'python app.py';
+        break;
+      case 'java':
+        baseImage = 'eclipse-temurin:17-jdk-alpine';
+        buildCommands = 'COPY .mvn .mvn\nCOPY mvnw pom.xml ./\nRUN ./mvnw dependency:go-offline\nCOPY src ./src\nRUN ./mvnw package -DskipTests';
+        runCommand = 'java -jar target/*.jar';
+        break;
+      case 'go':
+        baseImage = 'golang:1.21-alpine';
+        buildCommands = 'COPY go.* ./\nRUN go mod download\nCOPY . .\nRUN go build -o /app';
+        runCommand = '/app';
+        break;
+      default:
+        baseImage = 'node:18-alpine';
+        buildCommands = 'COPY . .';
+        runCommand = 'npm start';
+    }
+    
+    // Optimize based on build strategy
+    if (strategy === 'optimized') {
+      // Use multi-stage builds for optimized strategy
+      return `# Build stage
+FROM ${baseImage} as builder
 WORKDIR /app
+${buildCommands}
 
-# Copy package files
-COPY package*.json ./
+# Production stage
+FROM ${baseImage.includes('alpine') ? 'alpine:latest' : 'debian:bullseye-slim'}
+WORKDIR /app
+COPY --from=builder /app /app
+EXPOSE 8080
+CMD ["${runCommand}"]`;
+    } else {
+      // Standard single-stage build
+      return `FROM ${baseImage}
+WORKDIR /app
+${buildCommands}
+EXPOSE 8080
+CMD ["${runCommand}"]`;
+    }
+  }
 
-# Install dependencies
-RUN npm ci --only=production
-
-# Copy application code
-COPY . .
-
-# Expose port
-EXPOSE 3000
-
-# Health check
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \\
-  CMD curl -f http://localhost:3000/health || exit 1
-
-# Start application
-CMD ["npm", "start"]
-`.trim();
+  // Mock implementation for K8s deployment
+  mockDeployToKubernetes(params) {
+    const { repository, image_tag, environment } = params;
+    
+    logger.info(`[MOCK] Deploying ${repository} with image tag ${image_tag} to ${environment}`);
+    
+    return {
+      status: 'success',
+      deployment_id: 'mock-deployment-' + Date.now(),
+      deployment_url: `https://${environment}-${repository.replace('/', '-')}.example.com`,
+      environment: environment,
+      mock: true,
+      pipeline_id: params.pipeline_id || ('pipeline-' + Date.now())
+    };
   }
 
   async followBuildProgress(stream) {
