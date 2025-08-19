@@ -165,6 +165,7 @@ class AksProvisioner {
     
     const startTime = Date.now();
     const timeoutMs = timeoutMinutes * 60 * 1000;
+    let reconcileAttempted = false;
     
     while (Date.now() - startTime < timeoutMs) {
       try {
@@ -177,10 +178,31 @@ class AksProvisioner {
         }
         
         logger.info(`Cluster status: ${cluster.provisioningState}. Waiting...`);
+        
+        // If we get a 'Failed' state and haven't tried reconciliation yet, try it
+        if (cluster.provisioningState === 'Failed' && !reconcileAttempted) {
+          logger.info(`Cluster in Failed state. Attempting reconciliation...`);
+          await this.reconcileCluster(clusterName);
+          reconcileAttempted = true;
+        }
+        
         // Wait 30 seconds before checking again
         await new Promise(resolve => setTimeout(resolve, 30000));
       } catch (error) {
-        logger.warn(`Error checking cluster status: ${error.message}. Continuing to wait...`);
+        logger.warn(`Error checking cluster status: ${error.message}`);
+        
+        // If we haven't tried reconciliation yet, try it now
+        if (!reconcileAttempted && error.message.includes('control plane')) {
+          logger.info(`Control plane issue detected. Attempting reconciliation...`);
+          try {
+            await this.reconcileCluster(clusterName);
+            reconcileAttempted = true;
+          } catch (reconcileError) {
+            logger.error(`Reconciliation failed: ${reconcileError.message}`);
+          }
+        }
+        
+        // Continue waiting
         await new Promise(resolve => setTimeout(resolve, 30000));
       }
     }
@@ -213,6 +235,45 @@ class AksProvisioner {
       };
     } catch (error) {
       logger.error(`Failed to get status of cluster ${clusterName}:`, error);
+      throw error;
+    }
+  }
+  
+  async reconcileCluster(clusterName) {
+    if (!this.azureAvailable) {
+      return {
+        status: 'success',
+        message: '[MOCK] Cluster reconciled successfully',
+        mock: true
+      };
+    }
+    
+    try {
+      logger.info(`Reconciling AKS cluster ${clusterName} using Azure SDK...`);
+      
+      // Use the Azure SDK to update the cluster (equivalent to az aks update)
+      const cluster = await this.containerServiceClient.managedClusters.get(
+        this.resourceGroupName,
+        clusterName
+      );
+      
+      // Just updating the cluster with its current config should trigger reconciliation
+      const updateOperation = await this.containerServiceClient.managedClusters.beginCreateOrUpdate(
+        this.resourceGroupName,
+        clusterName,
+        cluster
+      );
+      
+      logger.info(`Cluster reconciliation initiated for ${clusterName}`);
+      
+      return {
+        status: 'reconciling',
+        cluster_name: clusterName,
+        resource_group: this.resourceGroupName,
+        mock: false
+      };
+    } catch (error) {
+      logger.error(`Failed to reconcile cluster ${clusterName}:`, error);
       throw error;
     }
   }
