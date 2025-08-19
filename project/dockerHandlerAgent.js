@@ -51,6 +51,7 @@ class DockerHandlerAgent {
         throw new Error('Commit SHA parameter is required');
       }
       
+      // Parse repository and convert to lowercase for Docker compatibility
       const [owner, repo] = repository.split('/');
       
       if (!owner || !repo) {
@@ -68,7 +69,8 @@ class DockerHandlerAgent {
             return this.mockBuildAndPushImage(owner, repo, commit_sha, build_prediction);
           }
         case 'generate_k8s_manifests':
-          return await this.generateKubernetesManifests(owner, repo, build_prediction, `${owner}/${repo}:${commit_sha.substring(0, 7)}`);
+          const imageName = `${owner.toLowerCase()}/${repo.toLowerCase()}:${commit_sha.substring(0, 7)}`;
+          return await this.generateKubernetesManifests(owner, repo, build_prediction, imageName);
         case 'deploy_to_k8s':
           if (this.k8sAvailable) {
             return await this.deployToKubernetes(params);
@@ -88,13 +90,17 @@ class DockerHandlerAgent {
   mockBuildAndPushImage(owner, repo, commitSha, buildPrediction) {
     logger.info(`[MOCK] Building Docker image for ${owner}/${repo} at commit ${commitSha.substring(0, 7)}`);
     
+    // Convert owner and repo to lowercase for Docker compatibility
+    const ownerLower = owner.toLowerCase();
+    const repoLower = repo.toLowerCase();
+    
     // Generate a mock Dockerfile based on the build prediction
     const dockerfileContent = this.createDockerfileContent(buildPrediction);
     logger.info('[MOCK] Generated Dockerfile:', dockerfileContent.substring(0, 100) + '...');
     
-    // Mock image name
+    // Mock image name - using lowercase
     const shortSha = commitSha.substring(0, 7);
-    const imageName = `${owner}/${repo}:${shortSha}`;
+    const imageName = `${ownerLower}/${repoLower}:${shortSha}`;
     
     // Mock registry
     const registryHost = process.env.DOCKER_REGISTRY || 'mock-registry.example.com';
@@ -110,7 +116,9 @@ class DockerHandlerAgent {
       build_output: '[MOCK] Docker build completed successfully',
       mock: true,
       dockerfile: dockerfileContent,
-      pipeline_id: 'pipeline-' + Date.now()
+      pipeline_id: 'pipeline-' + Date.now(),
+      // Include original values for reference
+      original_repository: `${owner}/${repo}`
     };
   }
 
@@ -121,16 +129,21 @@ class DockerHandlerAgent {
         throw new Error('Commit SHA is required for building Docker image');
       }
       
+      // Convert owner and repo to lowercase for Docker compatibility
+      const ownerLower = owner.toLowerCase();
+      const repoLower = repo.toLowerCase();
+      
       // Use a safe substring operation
       const shortSha = commitSha ? commitSha.substring(0, 7) : 'latest';
       
-      logger.info(`Building Docker image for ${owner}/${repo} at commit ${shortSha}`);
+      logger.info(`Building Docker image for ${ownerLower}/${repoLower} at commit ${shortSha}`);
+      logger.info(`Original repository: ${owner}/${repo}`);
       
       // Generate a Dockerfile based on the build prediction
       const dockerfilePath = await this.generateDockerfile(buildPrediction);
       
-      // Build the image
-      const imageName = `${owner}/${repo}:${shortSha}`;
+      // Build the image - using lowercase
+      const imageName = `${ownerLower}/${repoLower}:${shortSha}`;
       const stream = await this.docker.buildImage({
         context: process.cwd(),
         src: ['Dockerfile']
@@ -150,7 +163,9 @@ class DockerHandlerAgent {
         status: 'success',
         image: imageName,
         registry_image: registryHost ? `${registryHost}/${imageName}` : null,
-        build_output: buildOutput
+        build_output: buildOutput,
+        // Include original values for reference
+        original_repository: `${owner}/${repo}`
       };
     } catch (error) {
       logger.error('Docker build failed:', error);
@@ -300,7 +315,10 @@ CMD ["${runCommand}"]`;
     // Safely handle potentially null values
     const ownerSafe = owner || 'default';
     const repoSafe = repo || 'app';
-    const imageNameSafe = imageName || `${ownerSafe}/${repoSafe}:latest`;
+    const imageNameSafe = imageName || `${ownerSafe.toLowerCase()}/${repoSafe.toLowerCase()}:latest`;
+    
+    // Create a valid app name for Kubernetes (must be DNS compliant)
+    const appName = repoSafe.toLowerCase().replace(/[^a-z0-9-]/g, '-');
     
     // Add safety checks for buildPrediction
     const resources = buildPrediction?.resources || {
