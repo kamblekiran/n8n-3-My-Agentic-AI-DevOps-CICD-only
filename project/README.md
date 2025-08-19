@@ -3,7 +3,13 @@
 A Model Context Protocol (MCP) server that acts as the central hub for DevOps automation, interfacing with LLMs and various DevOps tools.
 
 ## Features
-
+npm install @azure/arm-containerservice @azure/identity
+AZURE_TENANT_ID=your-tenant-id
+AZURE_CLIENT_ID=your-service-principal-id
+AZURE_CLIENT_SECRET=your-service-principal-secret
+AZURE_SUBSCRIPTION_ID=your-subscription-id
+AZURE_RESOURCE_GROUP=your-resource-group-name
+AZURE_LOCATION=eastus
 - **Code Review Agent**: Automated code review using LLM analysis
 - **Test Writer Agent**: Automatic test generation for code changes
 - **Build Predictor Agent**: Predicts build outcomes and resource requirements
