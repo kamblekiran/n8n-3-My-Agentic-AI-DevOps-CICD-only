@@ -212,19 +212,35 @@ CMD ["node", "src/index.js"]
         
         // Log in to Docker Hub
         if (dockerPassword) {
-          logger.info('Logging in to Docker Hub...');
+          logger.info('Logging in to Docker Hub using password file...');
           
-          // Clean the token by removing ALL non-alphanumeric characters from the end
-          const cleanPassword = dockerPassword.trim().replace(/[^a-zA-Z0-9]+$/, '');
-          
-          // Add debug logging (safely)
-          const lastFourChars = cleanPassword.slice(-4);
-          logger.info(`Token length: ${cleanPassword.length}, ends with: ...${lastFourChars}`);
-          
-          // Make sure to use cleanPassword in the login command
-          const loginCmd = `echo "${cleanPassword}" | docker login -u ${dockerUsername} --password-stdin`;
-          await execPromise(loginCmd);
-          logger.info('Docker Hub login successful');
+          try {
+            // Write password to temporary file
+            const fs = require('fs');
+            const os = require('os');
+            const path = require('path');
+            const tempFile = path.join(os.tmpdir(), 'docker_pass_temp');
+            
+            // Write clean password to file
+            fs.writeFileSync(tempFile, dockerPassword.trim(), { encoding: 'utf8' });
+            
+            // Use --password-file instead of --password-stdin
+            const loginCmd = `docker login -u ${dockerUsername} --password-file ${tempFile}`;
+            const { stdout, stderr } = await execPromise(loginCmd);
+            
+            // Delete the temp file immediately
+            fs.unlinkSync(tempFile);
+            
+            if (stderr && stderr.includes('unauthorized')) {
+              logger.error(`Docker login failed: ${stderr}`);
+              throw new Error(`Docker login failed: ${stderr}`);
+            }
+            
+            logger.info('Docker Hub login successful');
+          } catch (loginError) {
+            logger.error(`Docker login error: ${loginError.message}`);
+            throw loginError;
+          }
         } else {
           logger.warn('Docker password not found, skipping login');
         }
