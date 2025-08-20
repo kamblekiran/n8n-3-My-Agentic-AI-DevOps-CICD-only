@@ -205,14 +205,26 @@ router.post('/provision-aks', async (req, res) => {
   try {
     const params = req.body;
     
-    // Extract parameters
-    const { repository, environment = 'staging', node_count = 1, vm_size = 'Standard_D2s_v3', wait_for_ready = true } = params;
+    // Extract parameters and ensure correct types
+    const repository = params.repository;
+    const environment = params.environment || 'staging';
+    const node_count = parseInt(params.node_count || 1, 10); // Convert to integer
+    const vm_size = params.vm_size || 'Standard_D2s_v3';
+    const wait_for_ready = params.wait_for_ready === 'true' || params.wait_for_ready === true;
     
     // Validate required parameters
     if (!repository) {
       return res.status(400).json({
         error: 'Missing required parameter',
         message: 'Repository parameter is required'
+      });
+    }
+    
+    // Validate node_count is a valid number
+    if (isNaN(node_count)) {
+      return res.status(400).json({
+        error: 'Invalid parameter',
+        message: 'node_count must be a valid number'
       });
     }
     
@@ -229,7 +241,7 @@ router.post('/provision-aks', async (req, res) => {
     // Create a valid cluster name based on environment and repo
     const clusterName = `${environment}-${repo.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
     
-    logger.info(`Provisioning AKS cluster: ${clusterName}`);
+    logger.info(`Provisioning AKS cluster: ${clusterName} with ${node_count} nodes of size ${vm_size}`);
     
     // Start cluster creation
     const clusterResult = await aksProvisioner.createAksCluster(clusterName, node_count, vm_size);
