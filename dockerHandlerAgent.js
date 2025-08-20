@@ -213,7 +213,16 @@ CMD ["node", "src/index.js"]
         // Log in to Docker Hub
         if (dockerPassword) {
           logger.info('Logging in to Docker Hub...');
-          const loginCmd = `echo "${dockerPassword}" | docker login -u ${dockerUsername} --password-stdin`;
+          
+          // Clean the token by removing ALL non-alphanumeric characters from the end
+          const cleanPassword = dockerPassword.trim().replace(/[^a-zA-Z0-9]+$/, '');
+          
+          // Add debug logging (safely)
+          const lastFourChars = cleanPassword.slice(-4);
+          logger.info(`Token length: ${cleanPassword.length}, ends with: ...${lastFourChars}`);
+          
+          // Make sure to use cleanPassword in the login command
+          const loginCmd = `echo "${cleanPassword}" | docker login -u ${dockerUsername} --password-stdin`;
           await execPromise(loginCmd);
           logger.info('Docker Hub login successful');
         } else {
