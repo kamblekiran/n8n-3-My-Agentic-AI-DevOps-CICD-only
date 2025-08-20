@@ -287,4 +287,4 @@ class DeployAgent {
   }
 }
 
-module.exports = new DeployAgent();
+module.exports = DeployAgent;
