@@ -39,12 +39,20 @@ class AksProvisioner {
     }
   }
   
+  // In the createAksCluster method, ensure nodeCount is a number
   async createAksCluster(clusterName, nodeCount = 1, vmSize = 'Standard_D2s_v3') {
-    if (!this.azureAvailable) {
-      return this.mockCreateAksCluster(clusterName, nodeCount, vmSize);
+    // Convert nodeCount to a number if it's not already
+    const numNodes = parseInt(nodeCount, 10);
+    
+    if (isNaN(numNodes)) {
+      throw new Error('Invalid node count. Must be a valid number.');
     }
     
-    logger.info(`Creating AKS cluster: ${clusterName} in ${this.resourceGroupName}`);
+    if (!this.azureAvailable) {
+      return this.mockCreateAksCluster(clusterName, numNodes, vmSize);
+    }
+    
+    logger.info(`Creating AKS cluster: ${clusterName} with ${numNodes} nodes of size ${vmSize}`);
     
     try {
       // Define cluster parameters
@@ -54,7 +62,7 @@ class AksProvisioner {
         agentPoolProfiles: [
           {
             name: 'agentpool',
-            count: nodeCount,
+            count: numNodes, // Use the converted number here
             vmSize: vmSize,
             mode: 'System',
             osType: 'Linux'
@@ -280,16 +288,22 @@ class AksProvisioner {
   
   // Mock methods for when Azure credentials aren't available
   mockCreateAksCluster(clusterName, nodeCount, vmSize) {
-    logger.info(`[MOCK] Creating AKS cluster: ${clusterName} with ${nodeCount} nodes of size ${vmSize}`);
+    // Convert nodeCount to a number if it's not already
+    const numNodes = parseInt(nodeCount, 10);
+    
+    logger.info(`[MOCK] Creating AKS cluster: ${clusterName} with ${numNodes} nodes of size ${vmSize}`);
     
     return {
-      status: 'creating',
+      status: 'success',
       cluster_name: clusterName,
       resource_group: this.resourceGroupName || 'mock-resource-group',
       location: this.location || 'eastus',
-      provisioning_state: 'InProgress',
-      estimated_time_minutes: 10,
-      mock: true
+      provisioning_state: 'Succeeded',
+      kubernetes_version: '1.27.7',
+      node_count: numNodes, // Use the converted number here
+      vm_size: vmSize,
+      mock: true,
+      message: 'This is a mock AKS cluster for POC demonstration'
     };
   }
   
