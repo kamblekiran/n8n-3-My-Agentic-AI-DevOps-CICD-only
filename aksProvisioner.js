@@ -1,3 +1,4 @@
+require('dotenv').config();
 const { ClientSecretCredential } = require('@azure/identity');
 const { ContainerServiceClient } = require('@azure/arm-containerservice');
 const winston = require('winston');
@@ -72,7 +73,7 @@ class AksProvisioner {
           clientId: this.clientId,
           secret: this.clientSecret
         },
-        kubernetesVersion: '1.27.7' // Try an older version that's more likely to be supported
+        kubernetesVersion: '1.32.6' // Try an older version that's more likely to be supported
       };
       
       // Create the cluster
@@ -103,41 +104,46 @@ class AksProvisioner {
   }
   
   async getAksCredentials(clusterName) {
-    if (!this.azureAvailable) {
-      return this.mockGetAksCredentials(clusterName);
-    }
-    
     try {
-      // Get cluster details
-      const cluster = await this.containerServiceClient.managedClusters.get(
-        this.resourceGroupName,
-        clusterName
-      );
+      // Get resource group from environment variables (.env file)
+      const resourceGroup = process.env.AKS_RESOURCE_GROUP;
       
-      // Get cluster admin credentials
-      const credentials = await this.containerServiceClient.managedClusters.listClusterAdminCredentials(
-        this.resourceGroupName,
-        clusterName
-      );
-      
-      // The kubeconfig is in the credentials.kubeconfigs array
-      if (credentials.kubeconfigs && credentials.kubeconfigs.length > 0) {
-        const kubeConfigContent = credentials.kubeconfigs[0].value.toString('utf8');
-        logger.info(`Retrieved kubeconfig for cluster ${clusterName}`);
-        
-        return {
-          status: 'success',
-          cluster_name: clusterName,
-          kubeconfig: kubeConfigContent,
-          provisioning_state: cluster.provisioningState,
-          fqdn: cluster.fqdn,
-          mock: false
-        };
-      } else {
-        throw new Error('No kubeconfig found in the response');
+      if (!resourceGroup) {
+        logger.error('AKS_RESOURCE_GROUP not found in environment variables');
+        throw new Error('AKS_RESOURCE_GROUP environment variable is required');
       }
+      
+      logger.info(`Getting credentials for AKS cluster: ${clusterName} in resource group: ${resourceGroup}`);
+      
+      // Check if az CLI is available
+      try {
+        const { execSync } = require('child_process');
+        execSync('az --version', { stdio: 'ignore' });
+      } catch (error) {
+        logger.warn('Azure CLI not available. Please install it first.');
+        throw new Error('Azure CLI not installed. Install it from: https://aka.ms/installazurecliwindows');
+      }
+      
+      // Execute the command to get credentials
+      const { execSync } = require('child_process');
+      execSync(`az aks get-credentials --resource-group ${resourceGroup} --name ${clusterName} --file ./temp-kubeconfig`);
+      
+      // Read the generated kubeconfig file
+      const fs = require('fs');
+      const kubeconfig = fs.readFileSync('./temp-kubeconfig', 'utf8');
+      
+      // Clean up
+      fs.unlinkSync('./temp-kubeconfig');
+      
+      return { mock: false, kubeconfig };
     } catch (error) {
-      logger.error(`Failed to get AKS credentials for ${clusterName}:`, error);
+      logger.error(`Failed to get AKS credentials: ${error.message}`);
+      
+      // Check if this is a common error
+      if (error.message.includes('not found')) {
+        throw new Error(`AKS cluster "${clusterName}" not found in resource group "${process.env.AKS_RESOURCE_GROUP}"`);
+      }
+      
       throw error;
     }
   }
@@ -328,6 +334,46 @@ class AksProvisioner {
       cluster_name: clusterName,
       resource_group: this.resourceGroupName || 'mock-resource-group',
       mock: true
+    };
+  }
+}
+
+// In your CI/CD controller or orchestrator
+async function runPipeline(repository, commitSha) {
+  try {
+    // First stage: Build and push Docker image
+    const dockerAgent = new DockerHandlerAgent();
+    const dockerResult = await dockerAgent.handle({
+      repository,
+      commit_sha: commitSha,
+      action: 'build'
+    });
+    
+    if (dockerResult.status !== 'success') {
+      throw new Error(`Docker build failed: ${dockerResult.error || 'Unknown error'}`);
+    }
+    
+    // Extract the full image name with tag from the Docker result
+    const imageName = dockerResult.image; // e.g., "ray786/sample-app-mcp:245cd4a"
+    
+    // Second stage: Deploy to AKS
+    const deployAgent = new DeployAgent();
+    const deployResult = await deployAgent.deploy({
+      repository,
+      image: imageName,
+      environment: 'staging'
+    });
+    
+    return {
+      status: 'success',
+      build: dockerResult,
+      deploy: deployResult
+    };
+  } catch (error) {
+    console.error('Pipeline failed:', error);
+    return {
+      status: 'error',
+      error: error.message
     };
   }
 }
