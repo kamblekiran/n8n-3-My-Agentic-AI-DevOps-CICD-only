@@ -1,11 +1,9 @@
+require('dotenv').config();
+
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
-const dotenv = require('dotenv');
 const winston = require('winston');
-
-// Load environment variables
-dotenv.config();
 
 // Import route handlers
 const agentRoutes = require('./routes/agents');
