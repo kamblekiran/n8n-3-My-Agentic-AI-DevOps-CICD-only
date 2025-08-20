@@ -1,51 +1,89 @@
 const express = require('express');
-const bodyParser = require('body-parser');
+const cors = require('cors');
+const helmet = require('helmet');
+const dotenv = require('dotenv');
 const winston = require('winston');
 
-// Setup logging
+// Load environment variables
+dotenv.config();
+
+// Import route handlers
+const agentRoutes = require('./routes/agents');
+const notificationRoutes = require('./routes/notifications');
+const healthRoutes = require('./routes/health');
+
+// Import middleware
+const authMiddleware = require('./middleware/auth');
+const errorHandler = require('./middleware/errorHandler');
+
+// Configure logger - simplified for POC
 const logger = winston.createLogger({
   level: 'info',
-  format: winston.format.json(),
-  transports: [new winston.transports.Console()]
+  format: winston.format.combine(
+    winston.format.timestamp(),
+    winston.format.simple()
+  ),
+  transports: [
+    new winston.transports.File({ filename: 'logs/error.log', level: 'error' }),
+    new winston.transports.File({ filename: 'logs/combined.log' }),
+    new winston.transports.Console()
+  ]
 });
 
-// Import routes
-const agentRoutes = require('./routes/agents');
-
-// Initialize Express app
 const app = express();
-const port = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3000;
 
-// Middleware
-app.use(bodyParser.json());
-app.use(bodyParser.urlencoded({ extended: true }));
+// Security middleware
+app.use(helmet());
+app.use(cors({
+  origin: process.env.ALLOWED_ORIGINS?.split(',') || ['http://localhost:5678'],
+  credentials: true
+}));
 
-// Health check endpoint
-app.get('/health', (req, res) => {
-  res.json({ status: 'OK', timestamp: new Date().toISOString() });
+// Body parsing middleware
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true }));
+
+// Request logging
+app.use((req, res, next) => {
+  logger.info(`${req.method} ${req.path}`, {
+    ip: req.ip,
+    userAgent: req.get('User-Agent')
+  });
+  next();
 });
 
-// Use agent routes
+// Authentication middleware for protected routes
+app.use('/agent', authMiddleware);
+
+// Routes
+app.use('/health', healthRoutes);
 app.use('/agent', agentRoutes);
+app.use('/notifications', notificationRoutes);
+
+// Error handling
+app.use(errorHandler);
+
+// 404 handler
+app.use('*', (req, res) => {
+  res.status(404).json({
+    error: 'Not Found',
+    message: `Route ${req.originalUrl} not found`
+  });
+});
 
 // Start server
-app.listen(port, () => {
-  logger.info(`Server is running on port ${port}`);
-  
-  // Log all registered routes - simplify this to avoid regex issues
+app.listen(PORT, () => {
+  logger.info(`MCP DevOps Server running on port ${PORT}`);
   logger.info('Available endpoints:');
-  
-  // Simple approach to just get the routes from the agent router
-  agentRoutes.stack.forEach(layer => {
-    if (layer.route) {
-      const methods = Object.keys(layer.route.methods)
-        .filter(method => layer.route.methods[method])
-        .map(method => method.toUpperCase())
-        .join(',');
-      logger.info(`  ${methods.padEnd(5)} /agent${layer.route.path}`);
-    }
-  });
-  
-  // Add the health endpoint
+  logger.info('  POST /agent/code-review');
+  logger.info('  POST /agent/test-writer');
+  logger.info('  POST /agent/build-predictor');
+  logger.info('  POST /agent/docker-handler');
+  logger.info('  POST /agent/provision-aks');  // Added new endpoint
+  logger.info('  POST /agent/deploy');
+  logger.info('  POST /agent/monitor');
   logger.info('  GET  /health');
 });
+
+module.exports = app;
