@@ -33,9 +33,9 @@ class DeployAgent {
 
   // In your deploy method, ensure you're using the AKS cluster
   async deploy(params) {
-    const { repository, image, environment = 'staging', cluster_name } = params;
+    const { repository, image, environment = 'staging', cluster_name, namespace = 'default' } = params;
     
-    logger.info(`Deploying ${repository} with image ${image} to ${environment}`);
+    logger.info(`Deploying ${repository} with image ${image} to ${environment} in namespace ${namespace}`);
     
     try {
       // Use the specified AKS cluster or default one
@@ -72,25 +72,41 @@ class DeployAgent {
       const k8sManifests = this.generateK8sManifests(repository, image, environment);
       
       // Deploy to Kubernetes
-      const namespace = 'default'; // Or use a parameter
+      const k8sNamespace = namespace || 'default'; // Ensure we have a fallback
+      
+      // Log the namespace to debug
+      logger.info(`Using namespace: ${k8sNamespace}`);
+      
+      // Verify namespace is defined before using it
+      if (!k8sNamespace) {
+        throw new Error('Kubernetes namespace is required for deployment');
+      }
+      
       const results = [];
       
-      // Deploy Deployment
+      // Deploy Deployment with explicit namespace
       if (k8sManifests.deployment) {
         try {
+          logger.info(`Creating deployment in namespace: ${k8sNamespace}`);
+          
           await this.k8sAppsClient.createNamespacedDeployment(
-            namespace,
+            String(k8sNamespace), // Convert to string to be safe
             k8sManifests.deployment
           );
           results.push({ type: 'deployment', status: 'created' });
         } catch (error) {
+          // Log detailed error for debugging
+          logger.error(`Deployment error: ${error.message}`);
+          if (error.response) {
+            logger.error(`Status code: ${error.response.statusCode}`);
+          }
+          
           if (error.response?.statusCode === 409) {
-            // Deployment already exists, update it with the new image
-            logger.info(`Deployment ${k8sManifests.deployment.metadata.name} already exists, updating it`);
+            logger.info(`Updating existing deployment in namespace: ${k8sNamespace}`);
             
             await this.k8sAppsClient.replaceNamespacedDeployment(
               k8sManifests.deployment.metadata.name,
-              namespace,
+              String(k8sNamespace), // Convert to string to be safe
               k8sManifests.deployment
             );
             results.push({ type: 'deployment', status: 'updated' });
@@ -100,11 +116,13 @@ class DeployAgent {
         }
       }
       
-      // Deploy Service
+      // Deploy Service with explicit namespace
       if (k8sManifests.service) {
         try {
+          logger.info(`Creating service in namespace: ${k8sNamespace}`);
+          
           await this.k8sClient.createNamespacedService(
-            namespace,
+            String(k8sNamespace), // Convert to string to be safe
             k8sManifests.service
           );
           results.push({ type: 'service', status: 'created' });
@@ -121,7 +139,7 @@ class DeployAgent {
         status: 'success',
         deployment_id: `${repository}-${Date.now()}`,
         deployed_resources: results,
-        namespace: namespace,
+        namespace: k8sNamespace,
         environment: environment,
         cluster: clusterName,
         mock: false
