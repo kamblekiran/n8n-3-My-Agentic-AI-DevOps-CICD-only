@@ -17,7 +17,7 @@ class DeployAgent {
   }
   
   async deploy(params) {
-    const { repository, image, environment = 'staging', k8s_manifests, create_cluster = false } = params;
+    const { repository, image, environment = 'staging', k8s_manifests, create_cluster = false, existing_cluster } = params;
     
     try {
       // Check for required parameters
@@ -34,11 +34,36 @@ class DeployAgent {
       
       logger.info(`Deploying ${repository} to ${environment}`);
       
-      // Create a valid cluster name based on environment and repo
-      const clusterName = `${environment}-${repo.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
+      // Use the provided cluster name or create one
+      let clusterName;
       
-      // If create_cluster is true, provision a new AKS cluster
-      if (create_cluster) {
+      if (existing_cluster) {
+        clusterName = existing_cluster;
+        logger.info(`Using existing cluster: ${clusterName}`);
+        
+        // Configure Kubernetes client with the existing cluster
+        try {
+          // Get credentials for the existing cluster
+          const credentialsResult = await aksProvisioner.getAksCredentials(clusterName);
+          
+          if (!credentialsResult.mock) {
+            // Initialize Kubernetes client with the existing cluster
+            this.kc = new k8s.KubeConfig();
+            this.kc.loadFromString(credentialsResult.kubeconfig);
+            this.k8sClient = this.kc.makeApiClient(k8s.CoreV1Api);
+            this.k8sAppsClient = this.kc.makeApiClient(k8s.AppsV1Api);
+            this.k8sAvailable = true;
+            
+            logger.info(`Kubernetes client configured with existing cluster: ${clusterName}`);
+          }
+        } catch (error) {
+          logger.error(`Failed to get credentials for existing cluster ${clusterName}:`, error);
+          return this.mockDeploy(params, clusterName);
+        }
+      } else if (create_cluster) {
+        // Create a valid cluster name based on environment and repo
+        clusterName = `${environment}-${repo.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
+        
         logger.info(`Provisioning new AKS cluster: ${clusterName}`);
         const clusterResult = await aksProvisioner.createAksCluster(clusterName, 1);
         
@@ -57,19 +82,19 @@ class DeployAgent {
         const credentialsResult = await aksProvisioner.getAksCredentials(clusterName);
         
         if (!credentialsResult.mock) {
-          // Save the kubeconfig to a file
-          const kubeconfigPath = path.join(process.cwd(), `.kubeconfig-${clusterName}`);
-          await fs.writeFile(kubeconfigPath, credentialsResult.kubeconfig);
-          
           // Initialize Kubernetes client with the new config
           this.kc = new k8s.KubeConfig();
-          this.kc.loadFromFile(kubeconfigPath);
+          this.kc.loadFromString(credentialsResult.kubeconfig);
           this.k8sClient = this.kc.makeApiClient(k8s.CoreV1Api);
           this.k8sAppsClient = this.kc.makeApiClient(k8s.AppsV1Api);
           this.k8sAvailable = true;
           
           logger.info(`Kubernetes client configured with new AKS cluster: ${clusterName}`);
         }
+      } else {
+        // Generate a cluster name but don't create it
+        clusterName = `${environment}-${repo.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
+        logger.info(`Using cluster name without creating: ${clusterName}`);
       }
       
       // Deploy to the cluster
