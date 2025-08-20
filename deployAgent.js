@@ -33,9 +33,17 @@ class DeployAgent {
 
   // In your deploy method, ensure you're using the AKS cluster
   async deploy(params) {
-    const { repository, image, environment = 'staging', cluster_name, namespace = 'default' } = params;
+    // Use environment variable as fallback for namespace
+    const { 
+      repository, 
+      image, 
+      environment = 'staging', 
+      cluster_name,
+      // First try params.namespace, then env var, then 'default' as last resort
+      namespace = process.env.DEFAULT_NAMESPACE || 'default'
+    } = params;
     
-    logger.info(`Deploying ${repository} with image ${image} to ${environment} in namespace ${namespace}`);
+    logger.info(`Starting deployment with namespace: "${namespace}" from ${params.namespace ? 'params' : 'environment variables'}`);
     
     try {
       // Use the specified AKS cluster or default one
