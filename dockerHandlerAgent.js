@@ -87,6 +87,12 @@ class DockerHandlerAgent {
       // Create short SHA for tagging
       const shortSha = commit_sha ? commit_sha.substring(0, 7) : 'latest';
       
+      // IMPORTANT: Use your Docker Hub username instead of the repository owner
+      const dockerUsername = process.env.DOCKER_USERNAME || 'ray786';
+      
+      // Create the image name using YOUR username
+      const imageName = `${dockerUsername}/${repoLower.toLowerCase().replace(/_/g, '-')}:${shortSha}`;
+      
       // Set up paths
       const tempDir = `./temp/${ownerLower}_${repoLower}_${shortSha}`;
       const fs = require('fs');
@@ -97,14 +103,13 @@ class DockerHandlerAgent {
         fs.mkdirSync(tempDir, { recursive: true });
       }
       
-      // CRITICAL FIX: Check if we're working with the sample app
+      // Check if we're working with the sample app
       let isSampleApp = repo.toLowerCase().includes('sample-app');
       
-      // Clone the repository to the temp directory (would need git module in real implementation)
-      // For POC, let's create mock structure based on repository name
+      // Create sample application files
       logger.info(`Creating sample application structure in ${tempDir}`);
       
-      // Create package.json for the sample app
+      // Create package.json
       const packageJson = {
         "name": `${repoLower}`,
         "version": "1.0.0",
@@ -119,7 +124,6 @@ class DockerHandlerAgent {
         }
       };
       
-      // Write package.json to temp directory
       fs.writeFileSync(path.join(tempDir, 'package.json'), JSON.stringify(packageJson, null, 2));
       
       // Create basic index.js
@@ -166,17 +170,14 @@ CMD ["node", "src/index.js"]
       
       fs.writeFileSync(path.join(tempDir, 'Dockerfile'), dockerfile);
       
-      // Docker build command (using exec since dockerode can be complex for this POC)
+      // Docker build command
       const { exec } = require('child_process');
       const util = require('util');
       const execPromise = util.promisify(exec);
       
-      // Create full image name
-      const imageName = `${ownerLower}/${repoLower.toLowerCase().replace(/_/g, '-')}:${shortSha}`;
-      
       logger.info(`Building Docker image: ${imageName}`);
       
-      // CRITICAL FIX: Execute Docker build with correct context
+      // Execute Docker build with correct context
       const buildCmd = `docker build -t ${imageName} ${tempDir}`;
       
       let buildOutput;
@@ -203,22 +204,20 @@ CMD ["node", "src/index.js"]
       // After successful build, try to push
       let pushOutput;
       try {
-        // Load Docker credentials from environment
-        const dockerUsername = process.env.DOCKER_USERNAME;
+        // Load Docker password from environment
         const dockerPassword = process.env.DOCKER_PASSWORD;
         
         // Log the username we're using (mask the password)
-        logger.info(`Using Docker credentials: ${dockerUsername || 'Not set'}`);
+        logger.info(`Using Docker credentials for user: ${dockerUsername}`);
         
-        // Log in to Docker Hub if credentials are available
-        if (dockerUsername && dockerPassword) {
+        // Log in to Docker Hub
+        if (dockerPassword) {
           logger.info('Logging in to Docker Hub...');
-          // Use the safer password-stdin method
           const loginCmd = `echo "${dockerPassword}" | docker login -u ${dockerUsername} --password-stdin`;
           await execPromise(loginCmd);
           logger.info('Docker Hub login successful');
         } else {
-          logger.warn('Docker credentials not found, skipping login');
+          logger.warn('Docker password not found, skipping login');
         }
         
         // Push the image
