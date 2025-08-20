@@ -1,5 +1,9 @@
 require('dotenv').config();
 
+console.log('Environment variables loaded:');
+console.log('- DOCKER_USERNAME:', process.env.DOCKER_USERNAME ? 'Set' : 'Not set');
+console.log('- DOCKER_PASSWORD:', process.env.DOCKER_PASSWORD ? 'Set' : 'Not set');
+
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
