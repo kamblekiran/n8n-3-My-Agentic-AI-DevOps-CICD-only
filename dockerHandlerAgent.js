@@ -212,34 +212,39 @@ CMD ["node", "src/index.js"]
         
         // Log in to Docker Hub
         if (dockerPassword) {
-          logger.info('Logging in to Docker Hub using password file...');
+          logger.info('Setting up Docker Hub authentication via config file...');
           
           try {
-            // Write password to temporary file
+            // Create Docker config directory structure
             const fs = require('fs');
             const os = require('os');
             const path = require('path');
-            const tempFile = path.join(os.tmpdir(), 'docker_pass_temp');
             
-            // Write clean password to file
-            fs.writeFileSync(tempFile, dockerPassword.trim(), { encoding: 'utf8' });
-            
-            // Use --password-file instead of --password-stdin
-            const loginCmd = `docker login -u ${dockerUsername} --password-file ${tempFile}`;
-            const { stdout, stderr } = await execPromise(loginCmd);
-            
-            // Delete the temp file immediately
-            fs.unlinkSync(tempFile);
-            
-            if (stderr && stderr.includes('unauthorized')) {
-              logger.error(`Docker login failed: ${stderr}`);
-              throw new Error(`Docker login failed: ${stderr}`);
+            // Create .docker directory if it doesn't exist
+            const dockerDir = path.join(os.homedir(), '.docker');
+            if (!fs.existsSync(dockerDir)) {
+              fs.mkdirSync(dockerDir, { recursive: true });
             }
             
-            logger.info('Docker Hub login successful');
-          } catch (loginError) {
-            logger.error(`Docker login error: ${loginError.message}`);
-            throw loginError;
+            // Create auth config with correctly encoded credentials
+            const cleanPassword = dockerPassword.trim();
+            const authString = Buffer.from(`${dockerUsername}:${cleanPassword}`).toString('base64');
+            const dockerConfig = {
+              auths: {
+                'https://index.docker.io/v1/': {
+                  auth: authString
+                }
+              }
+            };
+            
+            // Write config file
+            const configPath = path.join(dockerDir, 'config.json');
+            fs.writeFileSync(configPath, JSON.stringify(dockerConfig, null, 2));
+            
+            logger.info('Docker credentials configured via config.json');
+          } catch (configError) {
+            logger.error(`Failed to create Docker config: ${configError.message}`);
+            throw configError;
           }
         } else {
           logger.warn('Docker password not found, skipping login');
