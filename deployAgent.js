@@ -13,140 +13,85 @@ const logger = winston.createLogger({
 class DeployAgent {
   constructor() {
     this.k8sAvailable = false;
-    this.k8sClient = null;
-  }
-  
-  async deploy(params) {
-    const { repository, image, environment = 'staging', k8s_manifests, create_cluster = false, existing_cluster } = params;
     
+    // Try to load from a specific kubeconfig file
     try {
-      // Check for required parameters
-      if (!repository) {
-        throw new Error('Repository parameter is required');
-      }
+      this.kc = new k8s.KubeConfig();
       
-      // Parse repository
-      const [owner, repo] = repository.split('/');
+      // Use a pre-created kubeconfig file
+      const kubeconfigPath = process.env.KUBECONFIG || path.join(__dirname, '..', '..', 'config', 'kubeconfig');
+      this.kc.loadFromFile(kubeconfigPath);
       
-      if (!owner || !repo) {
-        throw new Error('Repository must be in format owner/repo');
-      }
-      
-      logger.info(`Deploying ${repository} to ${environment}`);
-      
-      // Use the provided cluster name or create one
-      let clusterName;
-      
-      if (existing_cluster) {
-        clusterName = existing_cluster;
-        logger.info(`Using existing cluster: ${clusterName}`);
-        
-        // Configure Kubernetes client with the existing cluster
-        try {
-          // Get credentials for the existing cluster
-          const credentialsResult = await aksProvisioner.getAksCredentials(clusterName);
-          
-          if (!credentialsResult.mock) {
-            // Initialize Kubernetes client with the existing cluster
-            this.kc = new k8s.KubeConfig();
-            this.kc.loadFromString(credentialsResult.kubeconfig);
-            this.k8sClient = this.kc.makeApiClient(k8s.CoreV1Api);
-            this.k8sAppsClient = this.kc.makeApiClient(k8s.AppsV1Api);
-            this.k8sAvailable = true;
-            
-            logger.info(`Kubernetes client configured with existing cluster: ${clusterName}`);
-          }
-        } catch (error) {
-          logger.error(`Failed to get credentials for existing cluster ${clusterName}:`, error);
-          return this.mockDeploy(params, clusterName);
-        }
-      } else if (create_cluster) {
-        // Create a valid cluster name based on environment and repo
-        clusterName = `${environment}-${repo.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
-        
-        logger.info(`Provisioning new AKS cluster: ${clusterName}`);
-        const clusterResult = await aksProvisioner.createAksCluster(clusterName, 1);
-        
-        // IMPORTANT: Wait for the cluster to be ready before proceeding
-        try {
-          logger.info(`Waiting for AKS cluster ${clusterName} to be ready...`);
-          // For POC, use a shorter timeout (3 minutes) instead of the default 10 minutes
-          await aksProvisioner.waitForClusterReady(clusterName, 3);
-        } catch (waitError) {
-          logger.error(`Cluster readiness timeout: ${waitError.message}`);
-          // Fall back to mock deployment if waiting times out
-          return this.mockDeploy(params, clusterName);
-        }
-        
-        // Get the kubeconfig for the cluster
-        const credentialsResult = await aksProvisioner.getAksCredentials(clusterName);
-        
-        if (!credentialsResult.mock) {
-          // Initialize Kubernetes client with the new config
-          this.kc = new k8s.KubeConfig();
-          this.kc.loadFromString(credentialsResult.kubeconfig);
-          this.k8sClient = this.kc.makeApiClient(k8s.CoreV1Api);
-          this.k8sAppsClient = this.kc.makeApiClient(k8s.AppsV1Api);
-          this.k8sAvailable = true;
-          
-          logger.info(`Kubernetes client configured with new AKS cluster: ${clusterName}`);
-        }
-      } else {
-        // Generate a cluster name but don't create it
-        clusterName = `${environment}-${repo.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
-        logger.info(`Using cluster name without creating: ${clusterName}`);
-      }
-      
-      // Deploy to the cluster
-      if (this.k8sAvailable) {
-        return await this.deployToK8s(params, clusterName);
-      } else {
-        return this.mockDeploy(params, clusterName);
-      }
+      this.k8sClient = this.kc.makeApiClient(k8s.CoreV1Api);
+      this.k8sAppsClient = this.kc.makeApiClient(k8s.AppsV1Api);
+      this.k8sAvailable = true;
+      logger.info('Kubernetes client initialized successfully from file');
     } catch (error) {
-      logger.error('Deployment failed:', error);
-      throw error;
+      logger.warn('Failed to load Kubernetes config:', error.message);
     }
   }
-  
-  async deployToK8s(params, clusterName) {
-    const { repository, image, environment = 'staging', k8s_manifests } = params;
-    const namespace = environment;
+
+  // In your deploy method, ensure you're using the AKS cluster
+  async deploy(params) {
+    const { repository, image, environment = 'staging', cluster_name } = params;
+    
+    logger.info(`Deploying ${repository} with image ${image} to ${environment}`);
     
     try {
-      // Create namespace
-      try {
-        await this.k8sClient.createNamespace({
-          metadata: {
-            name: namespace
-          }
-        });
-        logger.info(`Created namespace ${namespace}`);
-      } catch (error) {
-        // Namespace might already exist
-        if (error.response?.statusCode !== 409) {
-          logger.error(`Failed to create namespace ${namespace}:`, error);
-        } else {
-          logger.info(`Namespace ${namespace} already exists`);
-        }
+      // Use the specified AKS cluster or default one
+      const clusterName = cluster_name || process.env.DEFAULT_AKS_CLUSTER;
+      
+      if (!clusterName) {
+        logger.error('No AKS cluster specified and no default cluster configured');
+        throw new Error('AKS cluster name is required');
       }
       
-      // Deploy manifests
+      logger.info(`Using AKS cluster: ${clusterName}`);
+      
+      // Get AKS credentials
+      const aksCredentials = await aksProvisioner.getAksCredentials(clusterName);
+      
+      if (aksCredentials.mock) {
+        logger.warn('Using mock AKS credentials - this will not deploy to a real cluster');
+        return this.mockDeploy(params);
+      }
+      
+      // Initialize Kubernetes client with AKS credentials
+      this.kc = new k8s.KubeConfig();
+      
+      // Load from the kubeconfig data
+      const kubeconfigPath = await this.writeKubeconfig(aksCredentials.kubeconfig);
+      this.kc.loadFromFile(kubeconfigPath);
+      
+      // Create API clients
+      this.k8sClient = this.kc.makeApiClient(k8s.CoreV1Api);
+      this.k8sAppsClient = this.kc.makeApiClient(k8s.AppsV1Api);
+      this.k8sAvailable = true;
+      
+      // Generate Kubernetes manifests
+      const k8sManifests = this.generateK8sManifests(repository, image, environment);
+      
+      // Deploy to Kubernetes
+      const namespace = 'default'; // Or use a parameter
       const results = [];
       
-      if (k8s_manifests?.deployment) {
+      // Deploy Deployment
+      if (k8sManifests.deployment) {
         try {
           await this.k8sAppsClient.createNamespacedDeployment(
             namespace,
-            k8s_manifests.deployment
+            k8sManifests.deployment
           );
           results.push({ type: 'deployment', status: 'created' });
         } catch (error) {
           if (error.response?.statusCode === 409) {
+            // Deployment already exists, update it with the new image
+            logger.info(`Deployment ${k8sManifests.deployment.metadata.name} already exists, updating it`);
+            
             await this.k8sAppsClient.replaceNamespacedDeployment(
-              k8s_manifests.deployment.metadata.name,
+              k8sManifests.deployment.metadata.name,
               namespace,
-              k8s_manifests.deployment
+              k8sManifests.deployment
             );
             results.push({ type: 'deployment', status: 'updated' });
           } else {
@@ -155,11 +100,12 @@ class DeployAgent {
         }
       }
       
-      if (k8s_manifests?.service) {
+      // Deploy Service
+      if (k8sManifests.service) {
         try {
           await this.k8sClient.createNamespacedService(
             namespace,
-            k8s_manifests.service
+            k8sManifests.service
           );
           results.push({ type: 'service', status: 'created' });
         } catch (error) {
@@ -171,19 +117,17 @@ class DeployAgent {
         }
       }
       
-      // Return deployment details
       return {
         status: 'success',
-        repository: repository,
+        deployment_id: `${repository}-${Date.now()}`,
+        deployed_resources: results,
+        namespace: namespace,
         environment: environment,
-        cluster_name: clusterName,
-        deployment_url: `https://${environment}-${clusterName}.example.com`,
-        deployment_time: new Date().toISOString(),
-        results: results,
+        cluster: clusterName,
         mock: false
       };
     } catch (error) {
-      logger.error('Kubernetes deployment failed:', error);
+      logger.error(`AKS deployment failed: ${error.message}`);
       throw error;
     }
   }
@@ -205,6 +149,115 @@ class DeployAgent {
       message: 'This is a mock deployment for POC purposes',
       pipeline_id: params.pipeline_id || ('pipeline-' + Date.now())
     };
+  }
+  
+  generateK8sManifests(repository, image, environment) {
+    // Extract repo name from repository string
+    const repoName = repository.includes('/') ? repository.split('/')[1] : repository;
+    
+    // Create a valid app name for Kubernetes (must be DNS compliant)
+    const appName = repoName.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+    
+    // The image parameter already contains the full image name with tag
+    // e.g., "ray786/sample-app-mcp:245cd4a"
+    
+    const deployment = {
+      apiVersion: 'apps/v1',
+      kind: 'Deployment',
+      metadata: {
+        name: appName,
+        labels: {
+          app: appName,
+          environment: environment
+        },
+        annotations: {
+          'app.kubernetes.io/version': image.split(':')[1] || 'latest',
+          'deployment-timestamp': new Date().toISOString(),
+          'deployment-source': 'cicd-pipeline'
+        }
+      },
+      spec: {
+        replicas: 2,
+        selector: {
+          matchLabels: {
+            app: appName
+          }
+        },
+        template: {
+          metadata: {
+            labels: {
+              app: appName
+            }
+          },
+          spec: {
+            containers: [{
+              name: appName,
+              image: image, // Use the full image name with tag
+              ports: [{
+                containerPort: 8080
+              }],
+              resources: {
+                requests: {
+                  cpu: '100m',
+                  memory: '128Mi'
+                },
+                limits: {
+                  cpu: '500m',
+                  memory: '512Mi'
+                }
+              },
+              livenessProbe: {
+                httpGet: {
+                  path: '/health',
+                  port: 8080
+                },
+                initialDelaySeconds: 30,
+                periodSeconds: 10
+              }
+            }]
+          }
+        }
+      }
+    }; // <-- Added closing brace here
+
+    const service = {
+      apiVersion: 'v1',
+      kind: 'Service',
+      metadata: {
+        name: `${appName}-service`,
+        labels: {
+          app: appName
+        }
+      },
+      spec: {
+        selector: {
+          app: appName
+        },
+        ports: [{
+          port: 80,
+          targetPort: 8080,
+          protocol: 'TCP'
+        }],
+        type: 'ClusterIP'
+      }
+    };
+    
+    return {
+      deployment,
+      service
+    };
+  }
+  
+  // Helper to write kubeconfig to file
+  async writeKubeconfig(kubeconfig) {
+    const fs = require('fs').promises;
+    const path = require('path');
+    const os = require('os');
+    
+    const kubeconfigPath = path.join(os.tmpdir(), `kubeconfig-${Date.now()}`);
+    await fs.writeFile(kubeconfigPath, kubeconfig);
+    
+    return kubeconfigPath;
   }
 }
 
