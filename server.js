@@ -1,68 +1,35 @@
 const express = require('express');
-const cors = require('cors');
-const helmet = require('helmet');
-const dotenv = require('dotenv');
-const winston = require('winston');
+const router = express.Router();
+const codeReviewAgent = require('../agents/codeReviewAgent');
+const buildPredictorAgent = require('../agents/buildPredictorAgent');
+const dockerHandlerAgent = require('../agents/dockerHandlerAgent');
+const deployAgent = require('../agents/deployAgent');
+const monitorAgent = require('../agents/monitorAgent');
+const testWriterAgent = require('../agents/testWriterAgent');
+const aksProvisioner = require('../utils/aksProvisioner');
 
-// Load environment variables
-dotenv.config();
-
-// Import route handlers
-const agentRoutes = require('./routes/agents');
-const notificationRoutes = require('./routes/notifications');
-const healthRoutes = require('./routes/health');
-
-// Import middleware
-const authMiddleware = require('./middleware/auth');
-const errorHandler = require('./middleware/errorHandler');
-
-// Configure logger - simplified for POC
-const logger = winston.createLogger({
-  level: 'info',
-  format: winston.format.combine(
-    winston.format.timestamp(),
-    winston.format.simple()
-  ),
-  transports: [
-    new winston.transports.File({ filename: 'logs/error.log', level: 'error' }),
-    new winston.transports.File({ filename: 'logs/combined.log' }),
-    new winston.transports.Console()
-  ]
+// Code Review Agent
+router.post('/code-review', async (req, res) => {
+  // Your existing code...
 });
 
-const app = express();
-const PORT = process.env.PORT || 3000;
-
-// Security middleware
-app.use(helmet());
-app.use(cors({
-  origin: process.env.ALLOWED_ORIGINS?.split(',') || ['http://localhost:5678'],
-  credentials: true
-}));
-
-// Body parsing middleware
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true }));
-
-// Request logging
-app.use((req, res, next) => {
-  logger.info(`${req.method} ${req.path}`, {
-    ip: req.ip,
-    userAgent: req.get('User-Agent')
-  });
-  next();
+// Test Writer Agent
+router.post('/test-writer', async (req, res) => {
+  // Your existing code...
 });
 
-// Authentication middleware for protected routes
-app.use('/agent', authMiddleware);
+// Build Predictor Agent
+router.post('/build-predictor', async (req, res) => {
+  // Your existing code...
+});
 
-// Routes
-app.use('/health', healthRoutes);
-app.use('/agent', agentRoutes);
-app.use('/notifications', notificationRoutes);
+// Docker Handler Agent
+router.post('/docker-handler', async (req, res) => {
+  // Your existing code...
+});
 
-// AKS Provisioning endpoint
-app.post('/agent/provision-aks', async (req, res) => {
+// AKS Provisioner
+router.post('/provision-aks', async (req, res) => {
   try {
     const params = req.body;
     
@@ -149,8 +116,8 @@ app.post('/agent/provision-aks', async (req, res) => {
   }
 });
 
-// Update your existing /agent/deploy endpoint
-app.post('/agent/deploy', async (req, res) => {
+// Deploy Agent
+router.post('/deploy', async (req, res) => {
   try {
     const params = req.body;
     
@@ -195,24 +162,9 @@ app.post('/agent/deploy', async (req, res) => {
   }
 });
 
-// Error handling middleware
-app.use(errorHandler);
-
-// Start the server
-app.listen(PORT, () => {
-  logger.info(`Server is running on port ${PORT}`);
-  
-  // Log all registered routes
-  logger.info('Available endpoints:');
-  app._router.stack
-    .filter(r => r.route)
-    .forEach(route => {
-      Object.keys(route.route.methods)
-        .filter(method => route.route.methods[method])
-        .forEach(method => {
-          logger.info(`  ${method.toUpperCase().padEnd(5)} ${route.route.path}`);
-        });
-    });
+// Monitor Agent
+router.post('/monitor', async (req, res) => {
+  // Your existing code...
 });
 
-module.exports = app;
+module.exports = router;
