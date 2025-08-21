@@ -292,4 +292,5 @@ class DeployAgent {
 // const DeployAgent = require('../agents/deployAgent');
 // const instance = new DeployAgent();
 
-module.exports = DeployAgent;
+const deployAgentInstance = new DeployAgent();
+module.exports = deployAgentInstance;
