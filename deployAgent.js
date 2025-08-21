@@ -102,17 +102,15 @@ class DeployAgent {
       // Deploy Deployment with HARDCODED namespace
       if (k8sManifests.deployment) {
         try {
-          // Add namespace to the deployment metadata
-          k8sManifests.deployment.metadata.namespace = HARDCODED_NAMESPACE;
+          // Explicitly set the namespace in the manifest
+          k8sManifests.deployment.metadata.namespace = 'default';
           
-          logger.info(`Creating deployment in HARDCODED namespace: "${HARDCODED_NAMESPACE}"`);
-          logger.info(`Deployment name: ${k8sManifests.deployment.metadata.name}`);
+          // Log what we're about to do
+          logger.info(`Creating deployment "${k8sManifests.deployment.metadata.name}" in namespace "default"`);
           
-          // Extremely defensive logging
-          logger.info(`About to call createNamespacedDeployment with namespace param: "${HARDCODED_NAMESPACE}" (${typeof HARDCODED_NAMESPACE})`);
-          
+          // Make the API call with hardcoded string 'default' as first parameter
           await this.k8sAppsClient.createNamespacedDeployment(
-            HARDCODED_NAMESPACE,
+            'default', // Hardcoded string instead of variable
             k8sManifests.deployment
           );
           results.push({ type: 'deployment', status: 'created' });
@@ -127,9 +125,10 @@ class DeployAgent {
           if (error.response?.statusCode === 409) {
             logger.info(`Updating existing deployment in namespace: ${HARDCODED_NAMESPACE}`);
             
+            // Same hardcoded approach for updates
             await this.k8sAppsClient.replaceNamespacedDeployment(
               k8sManifests.deployment.metadata.name,
-              HARDCODED_NAMESPACE,
+              'default', // Hardcoded string
               k8sManifests.deployment
             );
             results.push({ type: 'deployment', status: 'updated' });
@@ -142,13 +141,14 @@ class DeployAgent {
       // Deploy Service with HARDCODED namespace
       if (k8sManifests.service) {
         try {
-          // Add namespace to the service metadata
-          k8sManifests.service.metadata.namespace = HARDCODED_NAMESPACE;
+          // Explicitly set the namespace in the manifest
+          k8sManifests.service.metadata.namespace = 'default';
           
-          logger.info(`Creating service in HARDCODED namespace: "${HARDCODED_NAMESPACE}"`);
+          logger.info(`Creating service "${k8sManifests.service.metadata.name}" in namespace "default"`);
           
+          // Make the API call with hardcoded string 'default' as first parameter
           await this.k8sClient.createNamespacedService(
-            HARDCODED_NAMESPACE,
+            'default', // Hardcoded string instead of variable
             k8sManifests.service
           );
           results.push({ type: 'service', status: 'created' });
@@ -213,14 +213,15 @@ class DeployAgent {
     // Create a valid app name for Kubernetes (must be DNS compliant)
     const appName = repoName.toLowerCase().replace(/[^a-z0-9-]/g, '-');
     
-    // The image parameter already contains the full image name with tag
-    // e.g., "ray786/sample-app-mcp:245cd4a"
+    // HARDCODE THE NAMESPACE in all manifests
+    const HARDCODED_NAMESPACE = 'default';
     
     const deployment = {
       apiVersion: 'apps/v1',
       kind: 'Deployment',
       metadata: {
         name: appName,
+        namespace: HARDCODED_NAMESPACE, // <-- ADD THIS LINE
         labels: {
           app: appName,
           environment: environment
@@ -273,13 +274,14 @@ class DeployAgent {
           }
         }
       }
-    }; // <-- Added closing brace here
+    };
 
     const service = {
       apiVersion: 'v1',
       kind: 'Service',
       metadata: {
         name: `${appName}-service`,
+        namespace: HARDCODED_NAMESPACE, // <-- ADD THIS LINE
         labels: {
           app: appName
         }
@@ -313,6 +315,12 @@ class DeployAgent {
     await fs.writeFile(kubeconfigPath, kubeconfig);
     
     return kubeconfigPath;
+  }
+  
+  // Add this method if you need a consistent way to get namespaces
+  getNamespace(providedNamespace) {
+    // Always return 'default' regardless of input
+    return 'default';
   }
 }
 
