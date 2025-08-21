@@ -43,10 +43,10 @@ class DeployAgent {
     // Log the entire params object for debugging
     logger.info(`Deploy called with params: ${JSON.stringify(params, null, 2)}`);
     
-    // Extract namespace with fallbacks, convert to string immediately
-    const namespace = String(params.namespace || process.env.DEFAULT_NAMESPACE || 'default');
+    // HARDCODE THE NAMESPACE VALUE for reliability
+    const HARDCODED_NAMESPACE = 'default';
     
-    // Extract other parameters
+    // Extract other parameters, but use our hardcoded namespace
     const { 
       repository, 
       image, 
@@ -54,7 +54,7 @@ class DeployAgent {
       cluster_name
     } = params;
     
-    logger.info(`Starting deployment with namespace: "${namespace}"`);
+    logger.info(`Starting deployment with HARDCODED namespace: "${HARDCODED_NAMESPACE}"`);
     
     try {
       // Use the specified AKS cluster or default one
@@ -90,29 +90,29 @@ class DeployAgent {
       // Generate Kubernetes manifests
       const k8sManifests = this.generateK8sManifests(repository, image, environment);
       
-      // Deploy to Kubernetes
-      const k8sNamespace = namespace || 'default'; // Ensure we have a fallback
+      logger.info(`K8S Manifests generated: ${JSON.stringify(k8sManifests ? 'yes' : 'no')}`);
       
-      // Log the namespace to debug
-      logger.info(`Using namespace: ${k8sNamespace}`);
-      
-      // Verify namespace is defined before using it
-      if (!k8sNamespace) {
-        throw new Error('Kubernetes namespace is required for deployment');
+      // Verify the manifests
+      if (!k8sManifests || !k8sManifests.deployment) {
+        throw new Error('Failed to generate valid Kubernetes manifests');
       }
       
       const results = [];
       
-      // Deploy Deployment with explicit namespace
+      // Deploy Deployment with HARDCODED namespace
       if (k8sManifests.deployment) {
         try {
           // Add namespace to the deployment metadata
-          k8sManifests.deployment.metadata.namespace = namespace;
+          k8sManifests.deployment.metadata.namespace = HARDCODED_NAMESPACE;
           
-          logger.info(`Creating deployment in namespace: "${namespace}"`);
+          logger.info(`Creating deployment in HARDCODED namespace: "${HARDCODED_NAMESPACE}"`);
+          logger.info(`Deployment name: ${k8sManifests.deployment.metadata.name}`);
+          
+          // Extremely defensive logging
+          logger.info(`About to call createNamespacedDeployment with namespace param: "${HARDCODED_NAMESPACE}" (${typeof HARDCODED_NAMESPACE})`);
           
           await this.k8sAppsClient.createNamespacedDeployment(
-            namespace, // Already converted to string above
+            HARDCODED_NAMESPACE,
             k8sManifests.deployment
           );
           results.push({ type: 'deployment', status: 'created' });
@@ -121,14 +121,15 @@ class DeployAgent {
           logger.error(`Deployment error: ${error.message}`);
           if (error.response) {
             logger.error(`Status code: ${error.response.statusCode}`);
+            logger.error(`Response body: ${JSON.stringify(error.response.body)}`);
           }
           
           if (error.response?.statusCode === 409) {
-            logger.info(`Updating existing deployment in namespace: ${k8sNamespace}`);
+            logger.info(`Updating existing deployment in namespace: ${HARDCODED_NAMESPACE}`);
             
             await this.k8sAppsClient.replaceNamespacedDeployment(
               k8sManifests.deployment.metadata.name,
-              String(k8sNamespace), // Convert to string to be safe
+              HARDCODED_NAMESPACE,
               k8sManifests.deployment
             );
             results.push({ type: 'deployment', status: 'updated' });
@@ -138,16 +139,16 @@ class DeployAgent {
         }
       }
       
-      // Deploy Service with explicit namespace
+      // Deploy Service with HARDCODED namespace
       if (k8sManifests.service) {
         try {
           // Add namespace to the service metadata
-          k8sManifests.service.metadata.namespace = namespace;
+          k8sManifests.service.metadata.namespace = HARDCODED_NAMESPACE;
           
-          logger.info(`Creating service in namespace: "${namespace}"`);
+          logger.info(`Creating service in HARDCODED namespace: "${HARDCODED_NAMESPACE}"`);
           
           await this.k8sClient.createNamespacedService(
-            namespace, // Already converted to string above
+            HARDCODED_NAMESPACE,
             k8sManifests.service
           );
           results.push({ type: 'service', status: 'created' });
@@ -164,7 +165,7 @@ class DeployAgent {
         status: 'success',
         deployment_id: `${repository}-${Date.now()}`,
         deployed_resources: results,
-        namespace: k8sNamespace,
+        namespace: HARDCODED_NAMESPACE,
         environment: environment,
         cluster: clusterName,
         mock: false
