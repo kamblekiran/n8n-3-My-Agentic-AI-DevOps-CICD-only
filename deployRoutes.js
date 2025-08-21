@@ -1,28 +1,20 @@
 const express = require('express');
 const router = express.Router();
 
-// In your routes file
-const deployAgentModule = require('../agents/deployAgent');
-console.log('Type of deployAgent:', typeof deployAgentModule);
-console.log('Has deploy method?', 'deploy' in deployAgentModule);
-console.log('Is constructor?', deployAgentModule.prototype && deployAgentModule.prototype.constructor === deployAgentModule);
+// Import DeployAgent once at the top
+const DeployAgent = require('../agents/deployAgent');
+
+// Debug info if needed
+console.log('Type of DeployAgent:', typeof DeployAgent);
+console.log('Has deploy method?', DeployAgent.prototype && 'deploy' in DeployAgent.prototype);
+console.log('Is constructor?', typeof DeployAgent === 'function');
 
 router.post('/deploy', async (req, res) => {
   try {
-    // Get the deployAgent module
-    const DeployAgent = require('../agents/deployAgent');
-    
-    // Check if it's a class or instance
-    if (typeof DeployAgent === 'function') {
-      // It's a class, instantiate it
-      const deployAgentInstance = new DeployAgent();
-      const result = await deployAgentInstance.deploy(req.body);
-      res.json(result);
-    } else {
-      // It's already an instance
-      const result = await DeployAgent.deploy(req.body);
-      res.json(result);
-    }
+    // No need to require it again, use the one imported at the top
+    const deployAgentInstance = new DeployAgent();
+    const result = await deployAgentInstance.deploy(req.body);
+    res.json(result);
   } catch (error) {
     console.error('Deployment error:', error);
     res.status(500).json({ error: 'Deployment failed', message: error.message });
