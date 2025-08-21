@@ -10,6 +10,7 @@ const logger = winston.createLogger({
   transports: [new winston.transports.Console()]
 });
 
+// Make sure all required methods exist
 class DeployAgent {
   constructor() {
     this.k8sAvailable = false;
@@ -287,4 +288,6 @@ class DeployAgent {
   }
 }
 
-module.exports = DeployAgent;
+// This would work with the instance export
+const DeployAgent = require('../agents/deployAgent');
+const instance = new DeployAgent();
