@@ -11,9 +11,15 @@ console.log('Is constructor?', typeof DeployAgent === 'function');
 
 router.post('/deploy', async (req, res) => {
   try {
+    // Add the namespace explicitly to the request body
+    const deployParams = {
+      ...req.body,
+      namespace: 'default' // Always include namespace
+    };
+    
     // No need to require it again, use the one imported at the top
     const deployAgentInstance = new DeployAgent();
-    const result = await deployAgentInstance.deploy(req.body);
+    const result = await deployAgentInstance.deploy(deployParams);
     res.json(result);
   } catch (error) {
     console.error('Deployment error:', error);
