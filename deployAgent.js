@@ -43,8 +43,10 @@ class DeployAgent {
     // Log the entire params object for debugging
     logger.info(`Deploy called with params: ${JSON.stringify(params, null, 2)}`);
     
-    // HARDCODE THE NAMESPACE VALUE for reliability
-    const HARDCODED_NAMESPACE = 'default';
+    // Extract namespace with fallback to 'default'
+    const namespace = String(params.namespace || 'default');
+    
+    logger.info(`Using namespace: "${namespace}"`);
     
     // Extract other parameters, but use our hardcoded namespace
     const { 
@@ -54,7 +56,7 @@ class DeployAgent {
       cluster_name
     } = params;
     
-    logger.info(`Starting deployment with HARDCODED namespace: "${HARDCODED_NAMESPACE}"`);
+    logger.info(`Starting deployment with namespace: "${namespace}"`);
     
     try {
       // Use the specified AKS cluster or default one
@@ -105,8 +107,10 @@ class DeployAgent {
           // Explicitly set the namespace in the manifest
           k8sManifests.deployment.metadata.namespace = 'default';
           
-          // Log what we're about to do
+          // Add extra debug logs
+          logger.info(`Deployment namespace in metadata: "${k8sManifests.deployment.metadata.namespace}"`);
           logger.info(`Creating deployment "${k8sManifests.deployment.metadata.name}" in namespace "default"`);
+          logger.info(`First parameter type: ${typeof 'default'}, value: "${'default'}"`);
           
           // Make the API call with hardcoded string 'default' as first parameter
           await this.k8sAppsClient.createNamespacedDeployment(
