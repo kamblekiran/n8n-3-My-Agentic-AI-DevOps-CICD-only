@@ -32,19 +32,29 @@ class DeployAgent {
     }
   }
 
-  // In your deploy method, ensure you're using the AKS cluster
+  // In your deploy method, make these changes
   async deploy(params) {
-    // Use environment variable as fallback for namespace
+    // Check if params is null or undefined
+    if (!params) {
+      logger.error('Deploy called with null or undefined parameters');
+      throw new Error('Deploy parameters are required');
+    }
+    
+    // Log the entire params object for debugging
+    logger.info(`Deploy called with params: ${JSON.stringify(params, null, 2)}`);
+    
+    // Extract namespace with fallbacks, convert to string immediately
+    const namespace = String(params.namespace || process.env.DEFAULT_NAMESPACE || 'default');
+    
+    // Extract other parameters
     const { 
       repository, 
       image, 
       environment = 'staging', 
-      cluster_name,
-      // First try params.namespace, then env var, then 'default' as last resort
-      namespace = process.env.DEFAULT_NAMESPACE || 'default'
+      cluster_name
     } = params;
     
-    logger.info(`Starting deployment with namespace: "${namespace}" from ${params.namespace ? 'params' : 'environment variables'}`);
+    logger.info(`Starting deployment with namespace: "${namespace}"`);
     
     try {
       // Use the specified AKS cluster or default one
@@ -96,10 +106,13 @@ class DeployAgent {
       // Deploy Deployment with explicit namespace
       if (k8sManifests.deployment) {
         try {
-          logger.info(`Creating deployment in namespace: ${k8sNamespace}`);
+          // Add namespace to the deployment metadata
+          k8sManifests.deployment.metadata.namespace = namespace;
+          
+          logger.info(`Creating deployment in namespace: "${namespace}"`);
           
           await this.k8sAppsClient.createNamespacedDeployment(
-            String(k8sNamespace), // Convert to string to be safe
+            namespace, // Already converted to string above
             k8sManifests.deployment
           );
           results.push({ type: 'deployment', status: 'created' });
@@ -128,10 +141,13 @@ class DeployAgent {
       // Deploy Service with explicit namespace
       if (k8sManifests.service) {
         try {
-          logger.info(`Creating service in namespace: ${k8sNamespace}`);
+          // Add namespace to the service metadata
+          k8sManifests.service.metadata.namespace = namespace;
+          
+          logger.info(`Creating service in namespace: "${namespace}"`);
           
           await this.k8sClient.createNamespacedService(
-            String(k8sNamespace), // Convert to string to be safe
+            namespace, // Already converted to string above
             k8sManifests.service
           );
           results.push({ type: 'service', status: 'created' });
@@ -159,16 +175,27 @@ class DeployAgent {
     }
   }
   
-  mockDeploy(params, clusterName) {
-    const { repository, image, environment = 'staging' } = params;
+  mockDeploy(params) {
+    if (!params) {
+      logger.error('MockDeploy called with null parameters');
+      throw new Error('MockDeploy parameters are required');
+    }
     
-    logger.info(`[MOCK] Deploying ${repository} to ${environment} in cluster ${clusterName}`);
+    // Extract with defaults to avoid undefined
+    const repository = params.repository || 'unknown-repo';
+    const image = params.image || 'unknown-image:latest';
+    const environment = params.environment || 'staging';
+    const clusterName = params.cluster_name || 'mock-cluster';
+    const namespace = params.namespace || 'default';
+    
+    logger.info(`[MOCK] Deploying ${repository} to ${environment} in cluster ${clusterName}, namespace ${namespace}`);
     
     // Generate mock deployment details
     return {
       status: 'success',
       repository: repository,
       environment: environment,
+      namespace: namespace,
       cluster_name: clusterName,
       deployment_url: `https://${environment}-${repository.replace('/', '-')}.example.com`,
       deployment_time: new Date().toISOString(),
